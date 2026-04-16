@@ -1,0 +1,223 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── OS-level CSS variables ───────────────────────────────────────────── */
+:root {
+  --bg:      #0a0a0a;
+  --panel:   #111111;
+  --border:  #1e1e1e;
+  --text:    #aaaaaa;
+  --dim:     #444444;
+  --accent:  #00ff41;
+  --glow:    rgba(0,255,65,0.07);
+  --danger:  #ff3333;
+  --warn:    #ffaa00;
+  --info:    #00aaff;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar { width: 2px; height: 2px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(0,255,65,0.3); }
+
+  ::selection { background: rgba(0,255,65,0.15); color: var(--accent); }
+
+  input { font-family: inherit; }
+  button { font-family: inherit; cursor: pointer; }
+}
+
+@layer components {
+  /* ── OS panels ─────────────────────────────────────────── */
+  .os-panel {
+    background: var(--panel);
+    border-color: var(--border);
+  }
+
+  .os-section {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+  }
+
+  .os-section:last-child { border-bottom: none; }
+
+  /* ── Typography ────────────────────────────────────────── */
+  .os-label {
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+
+  .os-value {
+    font-size: 10px;
+    color: var(--text);
+  }
+
+  .os-accent { color: var(--accent); }
+
+  /* ── Buttons ───────────────────────────────────────────── */
+  .os-btn {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid var(--border);
+    padding: 2px 7px;
+    border-radius: 2px;
+    transition: all 0.15s;
+  }
+  .os-btn:hover { color: var(--text); border-color: rgba(0,255,65,0.3); }
+  .os-btn.active { color: var(--accent); border-color: rgba(0,255,65,0.5); background: var(--glow); }
+
+  .os-link {
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  .os-link:hover { color: var(--text); }
+
+  /* ── App grid button ───────────────────────────────────── */
+  .app-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 6px 2px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    transition: all 0.15s;
+    cursor: pointer;
+  }
+  .app-btn:hover { border-color: var(--border); background: rgba(255,255,255,0.02); }
+  .app-btn.active {
+    border-color: rgba(0,255,65,0.4);
+    background: var(--glow);
+  }
+  .app-btn .app-label { font-size: 8px; color: var(--dim); transition: color 0.15s; }
+  .app-btn:hover .app-label { color: var(--text); }
+  .app-btn.active .app-label { color: var(--accent); }
+
+  /* ── Feed item ─────────────────────────────────────────── */
+  .feed-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    transition: background 0.1s;
+  }
+  .feed-item:hover { background: rgba(255,255,255,0.015); }
+  .feed-item:last-child { border-bottom: none; }
+
+  /* ── Content text styles ───────────────────────────────── */
+  .ct-title {
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0.12em;
+    margin-bottom: 6px;
+  }
+  .ct-rule {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 6px 0;
+  }
+  .ct-p {
+    font-size: 10px;
+    color: var(--dim);
+    line-height: 1.65;
+    margin-bottom: 6px;
+  }
+  .ct-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    padding: 1.5px 0;
+  }
+  .ct-row .label { color: var(--dim); }
+  .ct-row .value { color: var(--text); }
+  .ct-row .value.up { color: var(--accent); }
+  .ct-row .value.dn { color: var(--danger); }
+  .ct-item {
+    font-size: 10px;
+    color: var(--dim);
+    padding: 1px 0;
+    display: flex;
+    gap: 6px;
+    line-height: 1.5;
+  }
+  .ct-item::before { content: "▶"; color: var(--border); flex-shrink: 0; }
+  .ct-item.active::before { color: var(--accent); }
+
+  /* ── Chat ──────────────────────────────────────────────── */
+  .chat-msg { font-size: 10px; line-height: 1.6; padding: 2px 0; }
+  .chat-msg .name { font-weight: bold; }
+  .chat-msg .time { float: right; font-size: 9px; color: var(--dim); }
+
+  /* ── Status dot ────────────────────────────────────────── */
+  .live-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 5px var(--accent);
+    flex-shrink: 0;
+    animation: livePulse 1.8s ease-in-out infinite;
+  }
+
+  /* ── Vignette ──────────────────────────────────────────── */
+  .vignette {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 50%, transparent 38%, rgba(10,10,10,0.72) 100%);
+    z-index: 2;
+  }
+
+  /* ── CRT scanlines ─────────────────────────────────────── */
+  .scanlines {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,255,65,0.012) 2px, rgba(0,255,65,0.012) 4px
+    );
+    z-index: 9999;
+  }
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes livePulse {
+  0%,100% { opacity: 1; box-shadow: 0 0 4px var(--accent); }
+  50%      { opacity: 0.5; box-shadow: 0 0 8px var(--accent); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; } to { opacity: 1; }
+}
+@keyframes blink {
+  0%,100% { opacity: 1; } 50% { opacity: 0; }
+}
+@keyframes glowPulse {
+  0%,100% { box-shadow: 0 0 5px var(--accent), 0 0 10px rgba(0,255,65,0.4); }
+  50%      { box-shadow: 0 0 12px var(--accent), 0 0 25px rgba(0,255,65,0.6); }
+}
