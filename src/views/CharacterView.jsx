@@ -11,7 +11,7 @@ const HOLO_BASE     = new THREE.Color(0x001806)
 const HOLO_EMISSIVE = new THREE.Color(0x00ff41)
 const SCAN_COLOR    = new THREE.Color(0x00ff41)
 
-// ─── Error boundary ───────────────────────────────────────────────────────────
+// ─── HTML error boundary (wraps the entire Canvas) ───────────────────────────
 class SceneErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -42,6 +42,51 @@ class SceneErrorBoundary extends Component {
     }
     return this.props.children
   }
+}
+
+// ─── 3-D model error boundary (inside Canvas — renders a fallback shape) ──────
+class ModelErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError(error) {
+    console.error('[CharacterView] GLB load error:', error)
+    return { hasError: true }
+  }
+  render() {
+    if (this.state.hasError) return <FallbackHolo />
+    return this.props.children
+  }
+}
+
+// Holographic stand-in rendered when the GLB fails to load
+function FallbackHolo() {
+  const groupRef = useRef()
+  const rimRef   = useRef()
+  useFrame(({ clock }) => {
+    if (groupRef.current) groupRef.current.rotation.y = clock.elapsedTime * 0.38
+    if (rimRef.current)   rimRef.current.intensity = 2.4 + Math.sin(clock.elapsedTime * 1.2) * 0.6
+  })
+  const mat = <meshStandardMaterial color={HOLO_BASE} emissive={HOLO_EMISSIVE} emissiveIntensity={0.5} roughness={0.2} metalness={0.9} transparent opacity={0.82} wireframe />
+  return (
+    <group ref={groupRef} position={[0, 1, 0]}>
+      <ambientLight color="#0a1a0a" intensity={1.5} />
+      <pointLight ref={rimRef} color="#00ff41" position={[0, 2, -1.5]} intensity={2.4} />
+      <mesh position={[0, 0.6, 0]}>
+        <torusKnotGeometry args={[0.5, 0.16, 128, 16]} />
+        {mat}
+      </mesh>
+      <mesh position={[0, -0.5, 0]}>
+        <cylinderGeometry args={[0.08, 0.22, 1.0, 8]} />
+        {mat}
+      </mesh>
+      <mesh position={[0, -1.1, 0]} rotation={[-Math.PI/2, 0, 0]}>
+        <ringGeometry args={[0.3, 0.34, 48]} />
+        <meshBasicMaterial color="#00ff41" transparent opacity={0.18} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
 }
 
 // ─── Atmospheric point cloud ──────────────────────────────────────────────────
@@ -392,10 +437,12 @@ export default function CharacterView({ settings = {} }) {
           {/* Floor reference grid — Stage places model bottom at y=0 */}
           <gridHelper args={[20, 20, '#00ff41', '#1a1a1a']} position={[0, 0, 0]} />
 
-          <Suspense fallback={<Loader3D />}>
-            <HoloCharacter showScanBeam={scanBeam} />
-            {particles && <AtmosphericParticles />}
-          </Suspense>
+          <ModelErrorBoundary>
+            <Suspense fallback={<Loader3D />}>
+              <HoloCharacter showScanBeam={scanBeam} />
+              {particles && <AtmosphericParticles />}
+            </Suspense>
+          </ModelErrorBoundary>
 
           <EffectComposer>
             <Bloom
