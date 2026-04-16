@@ -1,4 +1,4 @@
-import { Suspense, useRef, useMemo, useLayoutEffect, useState, useEffect } from 'react'
+import { Suspense, useRef, useMemo, useEffect, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useGLTF, OrbitControls, Center, Grid, Environment } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
@@ -6,15 +6,16 @@ import * as THREE from 'three'
 
 useGLTF.preload('/assets/animegirl.glb')
 
-const HOLO_BASE    = new THREE.Color(0x001806)
+// Stable color constants — defined once, never re-created
+const HOLO_BASE     = new THREE.Color(0x001806)
 const HOLO_EMISSIVE = new THREE.Color(0x00ff41)
-const SCAN_COLOR   = new THREE.Color(0x00ff41)
+const SCAN_COLOR    = new THREE.Color(0x00ff41)
 
 // ─── Atmospheric point cloud ──────────────────────────────────────────────────
 function AtmosphericParticles() {
   const ref = useRef()
   const geo = useMemo(() => {
-    const g = new THREE.BufferGeometry()
+    const g   = new THREE.BufferGeometry()
     const pos = new Float32Array(300 * 3)
     for (let i = 0; i < 300; i++) {
       const r = 2.2 + Math.random() * 1.4
@@ -36,20 +37,25 @@ function AtmosphericParticles() {
 
   return (
     <points ref={ref} geometry={geo}>
-      <pointsMaterial size={0.04} color="#00ff41" transparent opacity={0.28} sizeAttenuation />
+      <pointsMaterial
+        size={0.04} color="#00ff41"
+        transparent opacity={0.28} sizeAttenuation
+      />
     </points>
   )
 }
 
 // ─── Scan beam ────────────────────────────────────────────────────────────────
-function ScanBeam({ yMin = -1.35, yMax = 1.65 }) {
+// Reads from boundsRef each frame so bounds updates never trigger re-renders
+function ScanBeam({ boundsRef }) {
   const beamRef  = useRef()
   const glowRef  = useRef()
   const trailRef = useRef()
   const dir = useRef(1)
-  const y   = useRef(yMin)
+  const y   = useRef(boundsRef.current.yMin)
 
   useFrame((_, dt) => {
+    const { yMin, yMax } = boundsRef.current
     y.current += dt * 0.88 * dir.current
     if (y.current >= yMax) { y.current = yMax; dir.current = -1 }
     if (y.current <= yMin) { y.current = yMin; dir.current =  1 }
@@ -66,7 +72,7 @@ function ScanBeam({ yMin = -1.35, yMax = 1.65 }) {
         <meshBasicMaterial color={SCAN_COLOR} transparent opacity={0.07} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       <mesh ref={trailRef} rotation={[-Math.PI/2, 0, 0]}>
-        <planeGeometry args={[3.2, 0.1]} />
+        <planeGeometry args={[3.2, 0.10]} />
         <meshBasicMaterial color={SCAN_COLOR} transparent opacity={0.13} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       <mesh ref={beamRef}  rotation={[-Math.PI/2, 0, 0]}>
@@ -95,42 +101,54 @@ function TargetRing() {
 
 // ─── Holographic character ────────────────────────────────────────────────────
 function HoloCharacter({ showScanBeam }) {
-  const { scene } = useGLTF('/assets/animegirl.glb')
-  const groupRef  = useRef()
-  const boundsRef = useRef({ yMin: -1.4, yMax: 1.65 })
+  const { scene }   = useGLTF('/assets/animegirl.glb')
+  const { size }    = useThree()
+  const groupRef    = useRef()
+  const boundsRef   = useRef({ yMin: -1.5, yMax: 1.7 })   // safe defaults
 
-  const clonedScene = useMemo(() => scene.clone(true), [scene])
-
-  useMemo(() => {
-    clonedScene.traverse(child => {
+  // FIX #1 & #2: single useMemo — clone AND apply holographic materials in one
+  // pass. Returns the configured scene; no side-effects outside the memo.
+  const clonedScene = useMemo(() => {
+    const clone = scene.clone(true)
+    clone.traverse(child => {
       if (!child.isMesh) return
       const src = child.material
       child.material = new THREE.MeshStandardMaterial({
-        map:              src.map              ?? null,
-        normalMap:        src.normalMap        ?? null,
-        roughnessMap:     src.roughnessMap     ?? null,
-        metalnessMap:     src.metalnessMap     ?? null,
-        aoMap:            src.aoMap            ?? null,
-        color:            HOLO_BASE,
-        emissive:         HOLO_EMISSIVE,
-        emissiveMap:      src.map              ?? null,
+        map:               src.map          ?? null,
+        normalMap:         src.normalMap    ?? null,
+        roughnessMap:      src.roughnessMap ?? null,
+        metalnessMap:      src.metalnessMap ?? null,
+        aoMap:             src.aoMap        ?? null,
+        color:             HOLO_BASE,
+        emissive:          HOLO_EMISSIVE,
+        emissiveMap:       src.map          ?? null,
         emissiveIntensity: 0.24,
-        roughness:        0.16,
-        metalness:        0.94,
-        transparent:      true,
-        opacity:          0.87,
-        envMapIntensity:  2.2,
+        roughness:         0.16,
+        metalness:         0.94,
+        transparent:       true,
+        opacity:           0.87,
+        envMapIntensity:   2.2,
       })
       child.castShadow = true
     })
-  }, [clonedScene])
+    return clone
+  }, [scene])
 
-  useLayoutEffect(() => {
+  // FIX #3: useEffect (not useLayoutEffect) — the R3F render loop has applied
+  // transforms by the time this fires, so Box3 returns real world bounds.
+  useEffect(() => {
     if (!groupRef.current) return
     const box = new THREE.Box3().setFromObject(groupRef.current)
-    boundsRef.current = { yMin: box.min.y, yMax: box.max.y }
+    if (!box.isEmpty()) {
+      boundsRef.current = { yMin: box.min.y, yMax: box.max.y }
+    }
   }, [clonedScene])
 
+  // Responsive scale: use the actual rendered canvas size from useThree so it
+  // reacts to window / panel resizes without reading window.innerWidth directly.
+  const scale = Math.min(size.height / 540, 1) * 2
+
+  // Subtle float animation
   useFrame(({ clock }) => {
     if (groupRef.current)
       groupRef.current.position.y = Math.sin(clock.elapsedTime * 0.52) * 0.046
@@ -138,11 +156,11 @@ function HoloCharacter({ showScanBeam }) {
 
   return (
     <>
-      <group ref={groupRef}>
-        <Center><primitive object={clonedScene} /></Center>
-        {showScanBeam && (
-          <ScanBeam yMin={boundsRef.current.yMin} yMax={boundsRef.current.yMax} />
-        )}
+      <group ref={groupRef} scale={scale}>
+        <Center>
+          <primitive object={clonedScene} />
+        </Center>
+        {showScanBeam && <ScanBeam boundsRef={boundsRef} />}
       </group>
       <TargetRing />
     </>
@@ -150,27 +168,35 @@ function HoloCharacter({ showScanBeam }) {
 }
 
 // ─── Lights ───────────────────────────────────────────────────────────────────
+// FIX #5: ambient was #070f07 ≈ RGB(7,15,7) — essentially black.
+// Raised to a visible level so the model is never fully dark.
 function SceneLights() {
   const rimRef = useRef()
   useFrame(({ clock }) => {
     if (rimRef.current)
-      rimRef.current.intensity = 2.6 + Math.sin(clock.elapsedTime * 1.15) * 0.45
+      rimRef.current.intensity = 2.8 + Math.sin(clock.elapsedTime * 1.15) * 0.45
   })
   return (
     <>
-      <ambientLight color="#070f07" intensity={4} />
-      <pointLight color="#152215" position={[0, 3.5, 2.5]} intensity={6} />
-      <pointLight ref={rimRef} color="#00ff41" position={[0.7, 2.4, -2]} intensity={2.6} />
-      <pointLight color="#00cc34" position={[-0.9, -0.6, 1.8]} intensity={1.3} />
-      <directionalLight color="#0b180b" position={[2, 4, 2]} intensity={1.4} />
+      {/* 60% void — dim ambient so nothing is pitch-black */}
+      <ambientLight color="#0a1a0a" intensity={1.5} />
+      {/* 30% slate — soft key from above-front for form */}
+      <pointLight color="#1a301a" position={[0, 3.5, 2.5]} intensity={8} />
+      {/* 10% neon rim — pulsing from behind-top */}
+      <pointLight ref={rimRef} color="#00ff41" position={[0.7, 2.4, -2]} intensity={2.8} />
+      {/* 10% neon fill — from below-front to light underside */}
+      <pointLight color="#00cc34" position={[-0.9, -0.6, 1.8]} intensity={1.6} />
+      <directionalLight color="#0d200d" position={[2, 4, 2]} intensity={1.6} />
     </>
   )
 }
 
-// ─── Loading spinner ──────────────────────────────────────────────────────────
+// ─── 3-D loading spinner (Suspense fallback inside Canvas) ────────────────────
 function Loader3D() {
   const ref = useRef()
-  useFrame(({ clock }) => { if (ref.current) ref.current.rotation.y = clock.elapsedTime * 2.2 })
+  useFrame(({ clock }) => {
+    if (ref.current) ref.current.rotation.y = clock.elapsedTime * 2.2
+  })
   return (
     <mesh ref={ref}>
       <torusGeometry args={[0.42, 0.03, 8, 32]} />
@@ -195,29 +221,33 @@ const DIALOGUES = [
 const GLITCH_CHARS = '!@#$%^&*<>[]{}|/\\?=+'
 
 function DialogueOverlay({ show }) {
-  const [idx,    setIdx]    = useState(0)
+  const [idx,     setIdx]    = useState(0)
   const [opacity, setOpacity] = useState(1)
   const [display, setDisplay] = useState(DIALOGUES[0])
   const [glitch,  setGlitch]  = useState(false)
 
-  // Rotate every 5s
   useEffect(() => {
     const id = setInterval(() => {
       setOpacity(0)
       setTimeout(() => {
-        setIdx(i => { const n = (i + 1) % DIALOGUES.length; setDisplay(DIALOGUES[n]); return n })
+        setIdx(i => {
+          const n = (i + 1) % DIALOGUES.length
+          setDisplay(DIALOGUES[n])
+          return n
+        })
         setOpacity(1)
       }, 380)
     }, 5000)
     return () => clearInterval(id)
   }, [])
 
-  // Random glitch
   useEffect(() => {
     const id = setInterval(() => {
       if (Math.random() > 0.65) {
         const corrupt = DIALOGUES[idx].split('').map(c =>
-          Math.random() > 0.72 ? GLITCH_CHARS[Math.floor(Math.random() * GLITCH_CHARS.length)] : c
+          Math.random() > 0.72
+            ? GLITCH_CHARS[Math.floor(Math.random() * GLITCH_CHARS.length)]
+            : c
         ).join('')
         setGlitch(true)
         setDisplay(corrupt)
@@ -228,7 +258,6 @@ function DialogueOverlay({ show }) {
   }, [idx])
 
   if (!show) return null
-
   return (
     <div style={{
       position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
@@ -236,16 +265,16 @@ function DialogueOverlay({ show }) {
       padding: '8px 20px',
       background: 'rgba(10,10,10,0.88)',
       border: '1px solid rgba(0,255,65,0.12)',
-      borderRadius: 2,
-      opacity,
+      borderRadius: 2, opacity,
       transition: 'opacity 0.38s ease',
-      maxWidth: '70%',
+      maxWidth: '70%', whiteSpace: 'nowrap',
     }}>
       <div style={{
-        fontSize: 11, color: glitch ? '#00ff41' : '#888',
-        letterSpacing: '0.04em', textAlign: 'center', fontFamily: 'inherit',
-        textShadow: glitch ? '0 0 8px #00ff41' : 'none',
-        transition: glitch ? 'none' : 'color 0.3s',
+        fontSize: 11, letterSpacing: '0.04em', textAlign: 'center',
+        fontFamily: 'inherit',
+        color:       glitch ? '#00ff41' : '#888',
+        textShadow:  glitch ? '0 0 8px #00ff41' : 'none',
+        transition:  glitch ? 'none' : 'color 0.3s',
       }}>
         {display}
       </div>
@@ -253,7 +282,7 @@ function DialogueOverlay({ show }) {
   )
 }
 
-// ─── Market pulse overlay (bottom-right) ─────────────────────────────────────
+// ─── Market pulse panel ───────────────────────────────────────────────────────
 function MarketPulse() {
   const [dots, setDots] = useState('')
   useEffect(() => {
@@ -263,10 +292,10 @@ function MarketPulse() {
     return () => clearInterval(id)
   }, [])
 
-  const row = (label, value, up) => (
+  const row = (label, value, cls) => (
     <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '1.5px 0', fontSize: 9 }}>
       <span style={{ color: '#444' }}>{label}</span>
-      <span style={{ color: up === true ? '#00ff41' : up === false ? '#ff3333' : '#888' }}>{value}</span>
+      <span style={{ color: cls === 'up' ? '#00ff41' : cls === 'dn' ? '#ff3333' : '#888' }}>{value}</span>
     </div>
   )
 
@@ -285,7 +314,7 @@ function MarketPulse() {
         {row('$READER',   'TBA')}
         {row('Vol 24h',   '---')}
         {row('Holders',   '---')}
-        {row('Liquidity', 'Pump.fun', null)}
+        {row('Liquidity', 'Pump.fun')}
       </div>
       <div style={{ borderTop: '1px solid #1e1e1e', marginTop: 5, paddingTop: 4, fontSize: 9, color: '#333', textAlign: 'center' }}>
         Pump.fun · Solana
@@ -294,7 +323,6 @@ function MarketPulse() {
   )
 }
 
-// ─── Control hint ─────────────────────────────────────────────────────────────
 function ControlHint() {
   return (
     <div style={{
@@ -309,25 +337,42 @@ function ControlHint() {
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 export default function CharacterView({ settings = {} }) {
-  const { particles = true, autoRotate = true, dialogue = true, scanBeam = true } = settings
+  const {
+    particles  = true,
+    autoRotate = true,
+    dialogue   = true,
+    scanBeam   = true,
+  } = settings
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#0a0a0a', overflow: 'hidden' }}>
-      {/* R3F Canvas fills center panel */}
+    // FIX: explicit height so Canvas always has a non-zero container to measure
+    <div style={{
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      minHeight: 0,       // required in a flex child so height: 100% resolves
+      background: '#0a0a0a',
+      overflow: 'hidden',
+    }}>
       <Canvas
         shadows
+        dpr={[1, 2]}        // handle HiDPI screens correctly
+        frameloop="always"
         gl={{
-          antialias: true,
-          toneMapping: THREE.ACESFilmicToneMapping,
+          antialias:           true,
+          toneMapping:         THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.25,
-          outputColorSpace: THREE.SRGBColorSpace,
+          outputColorSpace:    THREE.SRGBColorSpace,
         }}
         camera={{ position: [0, 0.1, 2.85], fov: 55, near: 0.1, far: 100 }}
         style={{ position: 'absolute', inset: 0 }}
-        scene={{ fog: new THREE.FogExp2(0x0a0a0a, 0.042) }}
+        // FIX #1: scene prop removed — fog is set declaratively inside via
+        // <fogExp2> so no inline object literal is recreated on every render.
       >
+        {/* FIX #1: fog as a stable JSX primitive attached to the scene */}
+        <fogExp2 attach="fog" args={[0x0a0a0a, 0.042]} />
+
         <SceneLights />
-        <Environment preset="city" background={false} />
 
         <Grid
           position={[0, -1.46, 0]}
@@ -343,13 +388,25 @@ export default function CharacterView({ settings = {} }) {
           infiniteGrid
         />
 
+        {/*
+          FIX #4: Environment is now INSIDE Suspense.
+          Previously it was outside, so when its HDR map loaded it triggered a
+          scene.environment update that caused a dark frame independent of the
+          model's load state.
+        */}
         <Suspense fallback={<Loader3D />}>
+          <Environment preset="night" background={false} />
           <HoloCharacter showScanBeam={scanBeam} />
           {particles && <AtmosphericParticles />}
         </Suspense>
 
         <EffectComposer>
-          <Bloom luminanceThreshold={0.12} luminanceSmoothing={0.88} intensity={1.7} mipmapBlur />
+          <Bloom
+            luminanceThreshold={0.12}
+            luminanceSmoothing={0.88}
+            intensity={1.7}
+            mipmapBlur
+          />
         </EffectComposer>
 
         <OrbitControls
@@ -366,10 +423,7 @@ export default function CharacterView({ settings = {} }) {
         />
       </Canvas>
 
-      {/* Vignette */}
       <div className="vignette" />
-
-      {/* DOM overlays */}
       <DialogueOverlay show={dialogue} />
       <MarketPulse />
       <ControlHint />
