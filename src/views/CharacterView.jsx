@@ -1,6 +1,6 @@
 import { Suspense, useRef, useMemo, useEffect, useState, Component } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useGLTF, OrbitControls, Center, Stage } from '@react-three/drei'
+import { useGLTF, OrbitControls, Center, Stage, Html, useProgress } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
 
@@ -89,6 +89,116 @@ function FallbackHolo() {
   )
 }
 
+// ─── Canvas loader — Suspense fallback, rendered via <Html center> ────────────
+const BOOT_LINES = [
+  'BOOTING READER OS v2.4.1',
+  'CONNECTING TO SOLANA MAINNET',
+  'LOADING NEURAL NETWORK',
+  'INITIALIZING 3D RENDERER',
+  'DECRYPTING AGENT MATRIX',
+]
+
+function CanvasLoader() {
+  const { progress } = useProgress()
+  const pct          = Math.floor(progress)
+  const linesVisible = Math.ceil((pct / 100) * BOOT_LINES.length)
+  const filled       = Math.round((pct / 100) * 26)
+  const bar          = '█'.repeat(filled) + '░'.repeat(26 - filled)
+  const [blink, setBlink] = useState(true)
+
+  useEffect(() => {
+    const id = setInterval(() => setBlink(b => !b), 530)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <Html center>
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: '#0a0a0a',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        fontFamily: '"Courier New", Courier, monospace',
+        userSelect: 'none',
+      }}>
+        {/* Brand */}
+        <div style={{ marginBottom: 44, textAlign: 'center' }}>
+          <div style={{
+            fontSize: 30, fontWeight: 700, letterSpacing: '0.34em',
+            color: '#00ff41',
+            textShadow: '0 0 18px #00ff41, 0 0 36px rgba(0,255,65,0.25)',
+          }}>
+            R E A D E R
+          </div>
+          <div style={{ fontSize: 8, color: '#1c1c1c', letterSpacing: '0.22em', marginTop: 6 }}>
+            AI AGENT OPERATING SYSTEM
+          </div>
+          <div style={{ width: 220, height: 1, background: 'linear-gradient(90deg,transparent,#00ff41,transparent)', margin: '10px auto 0', opacity: 0.25 }} />
+        </div>
+
+        {/* Boot log */}
+        <div style={{ width: 360, marginBottom: 30 }}>
+          {BOOT_LINES.map((line, i) => {
+            const isActive  = i === linesVisible - 1
+            const isDone    = i < linesVisible - 1
+            const isPending = i >= linesVisible
+            return (
+              <div key={i} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                fontSize: 10, padding: '3px 0',
+                color: isPending ? '#1e1e1e' : isDone ? '#00cc34' : '#00ff41',
+                letterSpacing: '0.05em',
+                textShadow: isActive ? '0 0 8px #00ff41' : 'none',
+              }}>
+                <span>&gt;&nbsp;{line}</span>
+                <span style={{ fontSize: 9, color: isDone ? '#00cc34' : 'transparent' }}>[ OK ]</span>
+              </div>
+            )
+          })}
+          {/* blinking cursor on current line */}
+          <div style={{ fontSize: 11, color: '#00ff41', marginTop: 2 }}>
+            {blink && linesVisible <= BOOT_LINES.length ? '█' : '\u00a0'}
+          </div>
+        </div>
+
+        {/* Progress */}
+        <div style={{ width: 360 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            marginBottom: 7,
+          }}>
+            <span style={{ fontSize: 9, color: '#00ff41', letterSpacing: '0.16em' }}>
+              INITIALIZING NEURAL PATHWAYS
+            </span>
+            <span style={{
+              fontSize: 22, fontWeight: 700, color: '#00ff41', letterSpacing: '0.04em',
+              textShadow: '0 0 16px #00ff41',
+            }}>
+              {pct}<span style={{ fontSize: 11 }}>%</span>
+            </span>
+          </div>
+
+          {/* CSS progress bar */}
+          <div style={{ width: '100%', height: 2, background: '#111', position: 'relative', overflow: 'hidden' }}>
+            <div style={{
+              position: 'absolute', top: 0, left: 0, height: '100%',
+              width: `${pct}%`,
+              background: '#00ff41',
+              boxShadow: '0 0 8px #00ff41',
+              transition: 'width 0.35s ease',
+            }} />
+          </div>
+
+          {/* Unicode bar */}
+          <div style={{ fontSize: 8, color: '#1e1e1e', marginTop: 6, letterSpacing: '0.03em' }}>
+            [{bar}]
+          </div>
+        </div>
+      </div>
+    </Html>
+  )
+}
+
 // ─── Atmospheric point cloud ──────────────────────────────────────────────────
 function AtmosphericParticles() {
   const ref = useRef()
@@ -124,7 +234,6 @@ function AtmosphericParticles() {
 }
 
 // ─── Scan beam ────────────────────────────────────────────────────────────────
-// Reads from boundsRef each frame so bounds updates never trigger re-renders
 function ScanBeam({ boundsRef }) {
   const beamRef  = useRef()
   const glowRef  = useRef()
@@ -170,7 +279,6 @@ function TargetRing() {
     ref.current.material.opacity = 0.1 + Math.sin(clock.elapsedTime * 1.4) * 0.05
   })
   return (
-    // Stage places model bottom at y=0, so ring sits at floor level
     <mesh ref={ref} rotation={[-Math.PI/2, 0, 0]} position={[0, 0.02, 0]}>
       <ringGeometry args={[0.75, 0.78, 64]} />
       <meshBasicMaterial color="#00ff41" transparent opacity={0.12} depthWrite={false} side={THREE.DoubleSide} />
@@ -185,7 +293,7 @@ function HoloCharacter({ showScanBeam }) {
 
   const { size }    = useThree()
   const groupRef    = useRef()
-  const boundsRef   = useRef({ yMin: 0, yMax: 1.7 })   // safe defaults (Stage puts bottom at y=0)
+  const boundsRef   = useRef({ yMin: 0, yMax: 1.7 })
 
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true)
@@ -230,12 +338,6 @@ function HoloCharacter({ showScanBeam }) {
 
   return (
     <>
-      {/*
-        Stage: auto-fits camera via Bounds, provides city environment + preset
-        lighting, places model bottom at y=0 via internal <Center top>.
-        shadows={false} — contact shadows would show through the transparent holo material.
-        makeDefault on OrbitControls is required for Stage's Bounds to call camera.fit().
-      */}
       <Stage adjustCamera={true} intensity={0.5} environment="city" shadows={false}>
         <Center>
           <group ref={groupRef} scale={scale}>
@@ -246,20 +348,6 @@ function HoloCharacter({ showScanBeam }) {
       {showScanBeam && <ScanBeam boundsRef={boundsRef} />}
       <TargetRing />
     </>
-  )
-}
-
-// ─── 3-D loading spinner (Suspense fallback inside Canvas) ────────────────────
-function Loader3D() {
-  const ref = useRef()
-  useFrame(({ clock }) => {
-    if (ref.current) ref.current.rotation.y = clock.elapsedTime * 2.2
-  })
-  return (
-    <mesh ref={ref}>
-      <torusGeometry args={[0.42, 0.03, 8, 32]} />
-      <meshBasicMaterial color="#00ff41" wireframe />
-    </mesh>
   )
 }
 
@@ -402,6 +490,21 @@ export default function CharacterView({ settings = {} }) {
     scanBeam   = true,
   } = settings
 
+  // useProgress works outside Canvas (zustand store shared with R3F loader)
+  const { progress } = useProgress()
+  const mountTime    = useRef(Date.now())
+  const [fading, setFading] = useState(false)
+  const [gone,   setGone]   = useState(false)
+
+  useEffect(() => {
+    if (progress < 100) return
+    // Show loading screen for at least 1.2 s so users see the boot sequence
+    const delay = Math.max(0, 1200 - (Date.now() - mountTime.current))
+    const t1 = setTimeout(() => setFading(true),  delay)
+    const t2 = setTimeout(() => setGone(true),    delay + 900)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [progress])
+
   return (
     <div style={{
       position: 'relative',
@@ -425,20 +528,23 @@ export default function CharacterView({ settings = {} }) {
           camera={{ position: [0, 0.8, 4.5], fov: 50, near: 0.1, far: 100 }}
           style={{ position: 'absolute', inset: 0 }}
         >
-          {/* WebGL clear color — ensures #0a0a0a even before any scene geometry renders */}
           <color attach="background" args={['#0a0a0a']} />
-
           <fogExp2 attach="fog" args={[0x0a0a0a, 0.038]} />
 
-          {/* Neon accent lights layered on top of Stage's built-in city lighting */}
           <pointLight color="#00ff41" position={[0.7, 2.4, -2]} intensity={2.8} />
           <pointLight color="#00cc34" position={[-0.9, -0.6, 1.8]} intensity={1.6} />
 
-          {/* Floor reference grid — Stage places model bottom at y=0 */}
           <gridHelper args={[20, 20, '#00ff41', '#1a1a1a']} position={[0, 0, 0]} />
 
           <ModelErrorBoundary>
-            <Suspense fallback={<Loader3D />}>
+            {/*
+              CanvasLoader is the Suspense fallback — rendered via <Html center>
+              so it lives inside the Canvas context. It uses position:fixed on
+              its inner div to cover the full viewport during load.
+              The FadeOverlay (outside Canvas) provides the smooth exit transition
+              because Suspense removes the fallback instantly on resolve.
+            */}
+            <Suspense fallback={<CanvasLoader />}>
               <HoloCharacter showScanBeam={scanBeam} />
               {particles && <AtmosphericParticles />}
             </Suspense>
@@ -453,7 +559,6 @@ export default function CharacterView({ settings = {} }) {
             />
           </EffectComposer>
 
-          {/* makeDefault required for Stage's Bounds to call camera.fit() on load */}
           <OrbitControls
             makeDefault
             target={[0, 1.0, 0]}
@@ -470,10 +575,28 @@ export default function CharacterView({ settings = {} }) {
         </Canvas>
       </SceneErrorBoundary>
 
+      {/*
+        FadeOverlay: sits above Canvas at z-index 99. While loading, it is
+        opaque (#0a0a0a) and the CanvasLoader inside Html is at z-index 200
+        on top of it. When loading completes, Suspense removes CanvasLoader
+        instantly — but FadeOverlay transitions opacity 0→1 over 0.9s,
+        smoothly revealing the 3D scene underneath.
+      */}
+      {!gone && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 99,
+          background: '#0a0a0a',
+          opacity:    fading ? 0 : 1,
+          transition: 'opacity 0.9s ease',
+          pointerEvents: 'none',
+        }} />
+      )}
+
       <div className="vignette" />
-      <DialogueOverlay show={dialogue} />
-      <MarketPulse />
-      <ControlHint />
+      {/* Dialogue and HUD only appear after loading is fully gone */}
+      <DialogueOverlay show={dialogue && gone} />
+      {gone && <MarketPulse />}
+      {gone && <ControlHint />}
     </div>
   )
 }
