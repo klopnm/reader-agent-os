@@ -1,6 +1,6 @@
-import { Suspense, useRef, useMemo, useEffect, useState } from 'react'
+import { Suspense, useRef, useMemo, useEffect, useState, Component } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useGLTF, OrbitControls, Center, Grid, Environment } from '@react-three/drei'
+import { useGLTF, OrbitControls, Center, Stage } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
 
@@ -10,6 +10,39 @@ useGLTF.preload('/assets/animegirl.glb')
 const HOLO_BASE     = new THREE.Color(0x001806)
 const HOLO_EMISSIVE = new THREE.Color(0x00ff41)
 const SCAN_COLOR    = new THREE.Color(0x00ff41)
+
+// ─── Error boundary ───────────────────────────────────────────────────────────
+class SceneErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    console.error('[CharacterView] 3D scene error:', error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          background: '#0a0a0a', color: '#00ff41',
+          fontFamily: 'monospace', fontSize: 11, gap: 8, padding: 24,
+        }}>
+          <div style={{ letterSpacing: '0.14em' }}>[SCENE ERROR]</div>
+          <div style={{ color: '#444', fontSize: 10, textAlign: 'center', maxWidth: 340 }}>
+            {this.state.error?.message ?? 'Unknown render error'}
+          </div>
+          <div style={{ color: '#333', fontSize: 9 }}>Check browser console for details.</div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 // ─── Atmospheric point cloud ──────────────────────────────────────────────────
 function AtmosphericParticles() {
@@ -92,7 +125,8 @@ function TargetRing() {
     ref.current.material.opacity = 0.1 + Math.sin(clock.elapsedTime * 1.4) * 0.05
   })
   return (
-    <mesh ref={ref} rotation={[-Math.PI/2, 0, 0]} position={[0, -1.42, 0]}>
+    // Stage places model bottom at y=0, so ring sits at floor level
+    <mesh ref={ref} rotation={[-Math.PI/2, 0, 0]} position={[0, 0.02, 0]}>
       <ringGeometry args={[0.75, 0.78, 64]} />
       <meshBasicMaterial color="#00ff41" transparent opacity={0.12} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
@@ -102,12 +136,12 @@ function TargetRing() {
 // ─── Holographic character ────────────────────────────────────────────────────
 function HoloCharacter({ showScanBeam }) {
   const { scene }   = useGLTF('/assets/animegirl.glb')
+  console.log('Model loading state:', scene)
+
   const { size }    = useThree()
   const groupRef    = useRef()
-  const boundsRef   = useRef({ yMin: -1.5, yMax: 1.7 })   // safe defaults
+  const boundsRef   = useRef({ yMin: 0, yMax: 1.7 })   // safe defaults (Stage puts bottom at y=0)
 
-  // FIX #1 & #2: single useMemo — clone AND apply holographic materials in one
-  // pass. Returns the configured scene; no side-effects outside the memo.
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true)
     clone.traverse(child => {
@@ -134,8 +168,6 @@ function HoloCharacter({ showScanBeam }) {
     return clone
   }, [scene])
 
-  // FIX #3: useEffect (not useLayoutEffect) — the R3F render loop has applied
-  // transforms by the time this fires, so Box3 returns real world bounds.
   useEffect(() => {
     if (!groupRef.current) return
     const box = new THREE.Box3().setFromObject(groupRef.current)
@@ -144,11 +176,8 @@ function HoloCharacter({ showScanBeam }) {
     }
   }, [clonedScene])
 
-  // Responsive scale: use the actual rendered canvas size from useThree so it
-  // reacts to window / panel resizes without reading window.innerWidth directly.
   const scale = Math.min(size.height / 540, 1) * 2
 
-  // Subtle float animation
   useFrame(({ clock }) => {
     if (groupRef.current)
       groupRef.current.position.y = Math.sin(clock.elapsedTime * 0.52) * 0.046
@@ -156,37 +185,21 @@ function HoloCharacter({ showScanBeam }) {
 
   return (
     <>
-      <group ref={groupRef} scale={scale}>
+      {/*
+        Stage: auto-fits camera via Bounds, provides city environment + preset
+        lighting, places model bottom at y=0 via internal <Center top>.
+        shadows={false} — contact shadows would show through the transparent holo material.
+        makeDefault on OrbitControls is required for Stage's Bounds to call camera.fit().
+      */}
+      <Stage adjustCamera={true} intensity={0.5} environment="city" shadows={false}>
         <Center>
-          <primitive object={clonedScene} />
+          <group ref={groupRef} scale={scale}>
+            <primitive object={clonedScene} />
+          </group>
         </Center>
-        {showScanBeam && <ScanBeam boundsRef={boundsRef} />}
-      </group>
+      </Stage>
+      {showScanBeam && <ScanBeam boundsRef={boundsRef} />}
       <TargetRing />
-    </>
-  )
-}
-
-// ─── Lights ───────────────────────────────────────────────────────────────────
-// FIX #5: ambient was #070f07 ≈ RGB(7,15,7) — essentially black.
-// Raised to a visible level so the model is never fully dark.
-function SceneLights() {
-  const rimRef = useRef()
-  useFrame(({ clock }) => {
-    if (rimRef.current)
-      rimRef.current.intensity = 2.8 + Math.sin(clock.elapsedTime * 1.15) * 0.45
-  })
-  return (
-    <>
-      {/* 60% void — dim ambient so nothing is pitch-black */}
-      <ambientLight color="#0a1a0a" intensity={1.5} />
-      {/* 30% slate — soft key from above-front for form */}
-      <pointLight color="#1a301a" position={[0, 3.5, 2.5]} intensity={8} />
-      {/* 10% neon rim — pulsing from behind-top */}
-      <pointLight ref={rimRef} color="#00ff41" position={[0.7, 2.4, -2]} intensity={2.8} />
-      {/* 10% neon fill — from below-front to light underside */}
-      <pointLight color="#00cc34" position={[-0.9, -0.6, 1.8]} intensity={1.6} />
-      <directionalLight color="#0d200d" position={[2, 4, 2]} intensity={1.6} />
     </>
   )
 }
@@ -345,83 +358,70 @@ export default function CharacterView({ settings = {} }) {
   } = settings
 
   return (
-    // FIX: explicit height so Canvas always has a non-zero container to measure
     <div style={{
       position: 'relative',
       width: '100%',
       height: '100%',
-      minHeight: 0,       // required in a flex child so height: 100% resolves
+      minHeight: 0,
       background: '#0a0a0a',
       overflow: 'hidden',
     }}>
-      <Canvas
-        shadows
-        dpr={[1, 2]}        // handle HiDPI screens correctly
-        frameloop="always"
-        gl={{
-          antialias:           true,
-          toneMapping:         THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.25,
-          outputColorSpace:    THREE.SRGBColorSpace,
-        }}
-        camera={{ position: [0, 0.1, 2.85], fov: 55, near: 0.1, far: 100 }}
-        style={{ position: 'absolute', inset: 0 }}
-        // FIX #1: scene prop removed — fog is set declaratively inside via
-        // <fogExp2> so no inline object literal is recreated on every render.
-      >
-        {/* FIX #1: fog as a stable JSX primitive attached to the scene */}
-        <fogExp2 attach="fog" args={[0x0a0a0a, 0.042]} />
+      <SceneErrorBoundary>
+        <Canvas
+          shadows
+          dpr={[1, 2]}
+          frameloop="always"
+          gl={{
+            antialias:           true,
+            toneMapping:         THREE.ACESFilmicToneMapping,
+            toneMappingExposure: 1.25,
+            outputColorSpace:    THREE.SRGBColorSpace,
+          }}
+          camera={{ position: [0, 0.8, 4.5], fov: 50, near: 0.1, far: 100 }}
+          style={{ position: 'absolute', inset: 0 }}
+        >
+          {/* WebGL clear color — ensures #0a0a0a even before any scene geometry renders */}
+          <color attach="background" args={['#0a0a0a']} />
 
-        <SceneLights />
+          <fogExp2 attach="fog" args={[0x0a0a0a, 0.038]} />
 
-        <Grid
-          position={[0, -1.46, 0]}
-          args={[30, 30]}
-          cellSize={0.32}
-          cellThickness={0.35}
-          cellColor="#001a07"
-          sectionSize={1.6}
-          sectionThickness={0.7}
-          sectionColor="#003314"
-          fadeDistance={8}
-          fadeStrength={2.5}
-          infiniteGrid
-        />
+          {/* Neon accent lights layered on top of Stage's built-in city lighting */}
+          <pointLight color="#00ff41" position={[0.7, 2.4, -2]} intensity={2.8} />
+          <pointLight color="#00cc34" position={[-0.9, -0.6, 1.8]} intensity={1.6} />
 
-        {/*
-          FIX #4: Environment is now INSIDE Suspense.
-          Previously it was outside, so when its HDR map loaded it triggered a
-          scene.environment update that caused a dark frame independent of the
-          model's load state.
-        */}
-        <Suspense fallback={<Loader3D />}>
-          <Environment preset="night" background={false} />
-          <HoloCharacter showScanBeam={scanBeam} />
-          {particles && <AtmosphericParticles />}
-        </Suspense>
+          {/* Floor reference grid — Stage places model bottom at y=0 */}
+          <gridHelper args={[20, 20, '#00ff41', '#1a1a1a']} position={[0, 0, 0]} />
 
-        <EffectComposer>
-          <Bloom
-            luminanceThreshold={0.12}
-            luminanceSmoothing={0.88}
-            intensity={1.7}
-            mipmapBlur
+          <Suspense fallback={<Loader3D />}>
+            <HoloCharacter showScanBeam={scanBeam} />
+            {particles && <AtmosphericParticles />}
+          </Suspense>
+
+          <EffectComposer>
+            <Bloom
+              luminanceThreshold={0.12}
+              luminanceSmoothing={0.88}
+              intensity={1.7}
+              mipmapBlur
+            />
+          </EffectComposer>
+
+          {/* makeDefault required for Stage's Bounds to call camera.fit() on load */}
+          <OrbitControls
+            makeDefault
+            target={[0, 1.0, 0]}
+            minPolarAngle={Math.PI * 0.28}
+            maxPolarAngle={Math.PI * 0.66}
+            minDistance={1.6}
+            maxDistance={8}
+            autoRotate={autoRotate}
+            autoRotateSpeed={0.45}
+            enablePan={false}
+            enableDamping
+            dampingFactor={0.06}
           />
-        </EffectComposer>
-
-        <OrbitControls
-          target={[0, 0.2, 0]}
-          minPolarAngle={Math.PI * 0.28}
-          maxPolarAngle={Math.PI * 0.66}
-          minDistance={1.6}
-          maxDistance={6}
-          autoRotate={autoRotate}
-          autoRotateSpeed={0.45}
-          enablePan={false}
-          enableDamping
-          dampingFactor={0.06}
-        />
-      </Canvas>
+        </Canvas>
+      </SceneErrorBoundary>
 
       <div className="vignette" />
       <DialogueOverlay show={dialogue} />
